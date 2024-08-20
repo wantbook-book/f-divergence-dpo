@@ -7,3 +7,4 @@ ckpts/
 trash/
 tmp*/
 logs/
+mt_bench/azure_openai.ipynb
