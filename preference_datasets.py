@@ -176,7 +176,7 @@ def get_imdb(split: str, silent: bool = False, cache_dir: str = None) -> Dict[st
         return prompt, chosen_response, rejected_response
 
     data = defaultdict(lambda: defaultdict(list))
-    for row in tqdm.tqdm(dataset, desc='Processing HH', disable=silent):
+    for row in tqdm.tqdm(dataset, desc='Processing IMDb', disable=silent):
         # prompt, chosen, rejected = split_prompt_and_responses(row)
         prompt = row['Prompt']
         chosen = row['positive_response'][len(prompt[:-1]):]
