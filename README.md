@@ -17,6 +17,10 @@ hydra-core==1.3.2
 tensor-parallel==1.2.4
 ```
 
+install slurm
+
+
+
 # How to Run?
 For experiments on the PPO with the IMDB-sentiment dataset, refer to the scripts in the "ppo/scripts/" folder. For example:
 
