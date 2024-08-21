@@ -8,3 +8,6 @@ trash/
 tmp*/
 logs/
 mt_bench/azure_openai.ipynb
+metrics/imdb/check_model.ipynb
+trainning_results
+generate_results
