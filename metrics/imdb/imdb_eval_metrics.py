@@ -3,12 +3,12 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 import numpy as np
+from safetensors.torch import load_file
 from tqdm import tqdm
 import os
 import argparse
 import tree
-
-
+from pathlib import Path
 def get_positive_score(scores):
     "Extract value associated with a positive sentiment from pipeline's output"
     return dict(map(lambda x: tuple(x.values()), scores))["POSITIVE"]
@@ -20,10 +20,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--checkpoint', type=str, help='Path to the checkpoint')
 parser.add_argument('--divergence', type=str, help='what kind of divergence')
 parser.add_argument('--alpha', type=float, default=0.5, help='what kind of divergence')
+parser.add_argument('--sft', type=bool, default=False, help='is sft')
 
 args = parser.parse_args()
 parent_dir = os.path.dirname(args.checkpoint)
-root_dit = '/home/chaoqi/projects/repos/direct-preference-optimization/outputs/imdb'
+# root_dit = '/home/jovyan/notebook/f-divergence-dpo/outputs/sft_imdb'
+root_dit = os.environ['ROOT_DIR']
+if not os.path.exists(root_dit):
+    os.makedirs(root_dit)
 step_idxs = args.checkpoint.split('/')[-2]
 print(f'Checkpoint: {args.checkpoint}')
 f_divergence = args.divergence
@@ -39,7 +43,8 @@ else:
     print(f"The file {path} exists. Exit the process.")
     exit() # Use sys.exit() if this doesn't work
 
-assert f_divergence in args.checkpoint, 'f_divergence must be in the checkpoint path'
+
+assert f_divergence in args.checkpoint or args.sft, 'f_divergence must be in the checkpoint path'
 
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
@@ -68,6 +73,26 @@ def get_f_divergence(f_divergence, alpha=0.5):
     else:
         raise NotImplementedError
     return f, f_prime_one
+torch.cuda.empty_cache()
+# 检查是否有可用的 GPU
+print('CUDA_VISBLE_DEVICES:', os.getenv('CUDA_VISIBLE_DEVICES', 'not set'))
+if torch.cuda.is_available():
+    num_gpus = torch.cuda.device_count()
+    print(f"Number of available GPUs: {num_gpus}")
+    
+    for i in range(num_gpus):
+        gpu_name = torch.cuda.get_device_name(i)
+        gpu_memory = torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)  # 转换为 GB
+        gpu_free_memory = torch.cuda.memory_reserved(i) / (1024 ** 3)  # 转换为 GB
+        gpu_allocated_memory = torch.cuda.memory_allocated(i) / (1024 ** 3)  # 转换为 GB
+        gpu_available_memory = gpu_memory - gpu_allocated_memory
+
+        print(f"GPU {i}: {gpu_name}")
+        print(f"  Total memory: {gpu_memory:.2f} GB")
+        print(f"  reserved memory: {gpu_free_memory:.2f} GB") 
+        print(f"  Free memory: {gpu_available_memory:.2f} GB")
+else:
+    print("No GPUs available.")
 
 set_seed(42)
 
@@ -82,13 +107,27 @@ tokenizer = AutoTokenizer.from_pretrained('gpt2-large')
 tokenizer.padding_side="left"
 if tokenizer.pad_token is None:
     tokenizer.pad_token=tokenizer.eos_token
+
+state_dict_path = Path(state_dict_path).resolve()
 model = AutoModelForCausalLM.from_pretrained('gpt2-large')
-model.load_state_dict(torch.load(state_dict_path, map_location=torch.device('cpu'))['state'])
+print(state_dict_path)
+# breakpoint()
+if state_dict_path.exists():
+    # model.load_state_dict(torch.load(state_dict_path, map_location=torch.device('cpu'))['state'])
+    if str(state_dict_path).endswith('.safetensors'):
+        state_dict = load_file(state_dict_path, device='cpu')
+        model.load_state_dict(state_dict, strict=False)
+    else:
+        model.load_state_dict(torch.load(state_dict_path, map_location=torch.device('cpu'))['state'], strict=False)
+elif (state_dict_path.parent / 'hf_model').exists():
+    model = AutoModelForCausalLM.from_pretrained(str(state_dict_path.parent / 'hf_model'))
+else:
+    raise FileNotFoundError(f"Model not loaded correctly")
 # import ipdb; ipdb.set_trace()
 model.to('cuda')
 
 # Load reference model
-ref_model_name = '.cache/chaoqi/imdb_dpo_gpt2_large_2023-07-10_16-45-15_446529/LATEST/policy.pt'  # this can be changed to another model if needed
+# ref_model_name = '.cache/chaoqi/imdb_dpo_gpt2_large_2023-07-10_16-45-15_446529/LATEST/policy.pt'  # this can be changed to another model if needed
 ref_tokenizer = AutoTokenizer.from_pretrained("gpt2-large")
 # ref_tokenizer.truncation_side = "right"
 ref_tokenizer.padding_side="left"
@@ -127,7 +166,7 @@ total_reward = 0
 
 DEBUG_0 = False
 DEBUG_1 = False
-DEBUG_2 = True
+DEBUG_2 = False
 with torch.no_grad():
     for batch_input_ids, batch_attention_mask in tqdm(data_loader):
         # Generate samples from the pretrained model
@@ -145,15 +184,18 @@ with torch.no_grad():
                 import ipdb; ipdb.set_trace()
             model_inputs = tokenizer(tokenizer.batch_decode(generated_ids), return_tensors='pt', padding=True)
             model_inputs = tree.map_structure(lambda x: x.to(model.device), model_inputs)
+            # 传入 labels，自动计算loss
             model_outputs = model(**model_inputs, labels=model_inputs['input_ids'])
             model_log_probs = model_outputs.logits.softmax(dim=-1).log()
 
             ref_inputs = ref_tokenizer(tokenizer.batch_decode(generated_ids), return_tensors='pt', padding=True)
             ref_inputs = tree.map_structure(lambda x: x.to(ref_model.device), ref_inputs)
             ref_outputs = ref_model(**ref_inputs, labels=ref_inputs['input_ids'])
+            # (batch_size, seq_len, vocab_size)
             ref_log_probs = ref_outputs.logits.softmax(dim=-1).log()
         
         generated_ids = model_inputs['input_ids']
+        #(batch_size, seq_len)
         attention_mask = (generated_ids != tokenizer.eos_token_id).float()
         if DEBUG_0:
             import ipdb; ipdb.set_trace()
@@ -167,9 +209,11 @@ with torch.no_grad():
         # Calculate f-divergence
         if DEBUG_1:
             import ipdb; ipdb.set_trace()
+        # attention_mask: (batch_size, seq_len, 1)
+        #log(p/q)
         log_ratio = (model_log_probs - ref_log_probs) * attention_mask.unsqueeze(-1)
-        ratio = torch.exp(-log_ratio)  # p/q
-        f_ratio = f(ratio) # f(p/q) * p
+        ratio = torch.exp(-log_ratio)  # q/p
+        f_ratio = f(ratio) # f(q/p) * p
         # f_divergence = f_ratio - f_prime_one * (ratio - 1)
         # f_divergence = f_divergence.sum(1).mean()  # sum over tokens, mean over batch
         f_divergence = f_ratio * torch.exp(model_log_probs) * attention_mask.unsqueeze(-1)
