@@ -9,3 +9,5 @@ for init_kl_coef in "${init_kl_coefs[@]}"
 do
   srun --gres=gpu:1 -c 8 --mem 64G -p general --exclude=g006 python ppo_sentiment.py --init_kl_coef $init_kl_coef --f_divergence reverse_kl --kl_in_reward True &
 done
+
+# python ppo_sentiment.py --init_kl_coef 0.03 --f_divergence reverse_kl --kl_in_reward True
