@@ -11,6 +11,7 @@ sys.path.append('/home/jovyan/notebook/trlx')
 from typing import List
 
 import torch
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from datasets import load_dataset
 from transformers import pipeline
 
@@ -22,10 +23,17 @@ import wandb
 wandb.init('/pubshare/fwk/wandb')
 from datetime import datetime
 
-def get_positive_score(scores):
-    "Extract value associated with a positive sentiment from pipeline's output"
-    return dict(map(lambda x: tuple(x.values()), scores))["POSITIVE"]
+# def get_positive_score(scores):
+#     "Extract value associated with a positive sentiment from pipeline's output"
+#     return dict(map(lambda x: tuple(x.values()), scores))["POSITIVE"]
 
+
+def get_reward_score(logits):
+    """
+    从模型的输出logits中提取奖励分数。
+    这里使用 logits 的均值作为示例，你可以根据具体情况自定义。
+    """
+    return logits.mean().item()
 
 def main(hparams={}, additional_hparams={}):
     ckpt_path = f"/pubshare/fwk/ppo_ckpts/{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
@@ -42,7 +50,9 @@ def main(hparams={}, additional_hparams={}):
 
     # config change
     config.train.checkpoint_interval = 100
-    # config.method.target = 12
+    config.method.target = 3
+    # config change
+
     ckpt_path = Path(ckpt_path)
     ckpt_path.mkdir(parents=True, exist_ok=True)
     config_dict = config.to_dict()
@@ -61,18 +71,39 @@ def main(hparams={}, additional_hparams={}):
     else:
         device = -1
 
-    sentiment_fn = pipeline(
-        "sentiment-analysis",
-        "siebert/sentiment-roberta-large-english",
-        top_k=2,
-        truncation=True,
-        batch_size=256,
-        device=device,
-    )
+    # sentiment_fn = pipeline(
+    #     "sentiment-analysis",
+    #     "siebert/sentiment-roberta-large-english",
+    #     top_k=2,
+    #     truncation=True,
+    #     batch_size=256,
+    #     device=device,
+    # )
+    reward_model_name = './results/checkpoint-1173'  # best model
+    reward_model = GPT2LMHeadModel.from_pretrained(reward_model_name)
+    reward_tokenizer = GPT2Tokenizer.from_pretrained(reward_model_name)
+    if reward_tokenizer.pad_token is None:
+        reward_tokenizer.pad_token = reward_tokenizer.eos_token
+    reward_model.to(device)
 
+
+    # def reward_fn(samples: List[str], **kwargs) -> List[float]:
+    #     sentiments = list(map(get_positive_score, sentiment_fn(samples)))
+    #     return sentiments
     def reward_fn(samples: List[str], **kwargs) -> List[float]:
-        sentiments = list(map(get_positive_score, sentiment_fn(samples)))
-        return sentiments
+        # 将样本tokenize并移至设备
+        inputs = reward_tokenizer(samples, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        inputs = {key: val.to(device) for key, val in inputs.items()}
+
+        # 使用模型生成logits
+        with torch.no_grad():
+            outputs = reward_model(**inputs)
+            logits = outputs.logits  # 获取logits
+
+        # 计算每个样本的奖励分数
+        rewards = [get_reward_score(logit) for logit in logits]
+
+        return rewards
 
     # Use the test split for evaluation
     imdb_test = load_dataset("imdb", split="test")
