@@ -15,3 +15,6 @@ scipy
 nltk
 peft==0.5.0
 shortuuid
+"fschat[model_worker,webui]"
+anthropic
+pyyaml
