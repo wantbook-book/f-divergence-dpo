@@ -108,7 +108,7 @@ def get_f_divergence(f_divergence, alpha=0.5):
         raise NotImplementedError
     return f, f_prime_one
 
-def default_fppo_config(f_divergence, alpha, init_kl_coef):
+def default_fppo_config(f_divergence, alpha, init_kl_coef, ckpt_path):
     if f_divergence == "alpha_divergence":
         tags = [f_divergence, str(alpha), f"init_kl_coef_{init_kl_coef}"]
     else:
@@ -149,7 +149,8 @@ def default_fppo_config(f_divergence, alpha, init_kl_coef):
             eval_interval=50,
             pipeline="PromptPipeline",
             trainer="AccelerateFPPOTrainer",
-            tags = tags
+            tags = tags,
+            checkpoint_dir = ckpt_path
         ),
         model=ModelConfig(model_path="lvwerra/gpt2-imdb", num_layers_unfrozen=2),
         tokenizer=TokenizerConfig(tokenizer_path="gpt2", truncation_side="right"),
