@@ -222,6 +222,51 @@ def _get_batch_logps(logits: torch.FloatTensor, labels: torch.LongTensor, averag
     else:
         return (per_token_logps * loss_mask).sum(-1)
 
+def _get_batch_mle_loss(logits: torch.FloatTensor, labels: torch.LongTensor, average_log_prob: bool = False) -> torch.FloatTensor:
+    return -(_get_batch_logps(logits, labels, average_log_prob))
+
+def _get_batch_ul_loss(logits: torch.FloatTensor, labels: torch.LongTensor):
+    """Compute unlikelihood loss of the given labels under the given logits.
+
+    Args:
+        logits: Logits of the model (unnormalized). Shape: (batch_size, sequence_length, vocab_size)
+        labels: Labels for which to compute the log probabilities. Label tokens with a value of -100 are ignored. Shape: (batch_size, sequence_length)
+        average_log_prob: If True, return the average log probability per (non-masked) token. Otherwise, return the sum of the log probabilities of the (non-masked) tokens.
+
+    Returns:
+        A tensor of shape (batch_size,) containing the average/sum log probabilities of the given labels under the given logits.
+    """
+    assert logits.shape[:-1] == labels.shape
+    batch_size, seq_length, vocab_size = logits.shape
+
+    lprobs = F.log_softmax(logits, dim=-1)  # [batch_size, seq_length, vocab_size]
+    probs = torch.exp(lprobs)  # 将log概率转换为概率 [batch_size, seq_length, vocab_size]
+
+    #将 labels 展平为一维数组，方便索引
+    labels = labels.view(batch_size, seq_length)  # [batch_size * seq_length]
+    
+    # 对于每一个时间步的真实标签，找到非目标词汇 (即负样本)
+    # 首先计算负样本 mask
+    # 创建一个全零的负样本 mask
+    negative_mask = torch.zeros_like(probs)
+    # 遍历每个样本，构建负样本 mask
+    for b in range(batch_size):
+        for t in range(1, seq_length):  # 从第1个时间步开始（因为第0个时间步没有历史上下文）
+            prev_tokens = labels[b, :t]  # 当前时间步 t 之前的 tokens 都作为负样本
+            for prev_token in prev_tokens:
+                if prev_token != -100:  # 忽略填充索引
+                    negative_mask[b, t, prev_token] = 1  # 标记这些之前生成的词为负样本
+
+    # 计算 1 - p(x_nt) 的值
+    one_minus_probs = torch.clamp(1.0 - probs, min=1e-5)
+    # 计算 unlikelihood loss: -log(1 - p(x_nt)) 乘以 negative mask
+    unlikelihood_loss = -torch.log(one_minus_probs) * negative_mask
+
+    # 按照所有负样本的总和来计算损失
+    # unlikelihood_loss = unlikelihood_loss.sum(-1)[:, -1].squeeze(-1)
+    unlikelihood_loss = unlikelihood_loss.sum(-1).sum(-1)
+    return unlikelihood_loss
+
 
 def concatenated_inputs(batch: Dict[str, Union[List, torch.LongTensor]]) -> Dict[str, torch.LongTensor]:
     """Concatenate the chosen and rejected inputs into a single tensor.
@@ -298,6 +343,8 @@ class BasicTrainer(object):
                 self._loss_fn = partial(alpha_dpo_loss, alpha=config.loss.alpha)
             else:
                 raise ValueError(f'Unknown divergence {config.loss.divergence}')
+        elif config.loss.name == 'unlike':
+            self.rank_alpha = config.loss.rank_alpha
             
 
     def get_batch_samples(self, batch: Dict[str, torch.LongTensor]) -> Tuple[str, str]:
@@ -369,6 +416,18 @@ class BasicTrainer(object):
             policy_chosen_logps = _get_batch_logps(policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
 
             losses = -policy_chosen_logps
+        
+        elif loss_config.name == 'unlike':
+            policy_chosen_logits = self.policy(batch['chosen_input_ids'], attention_mask=batch['chosen_attention_mask']).logits.to(torch.float32)
+            policy_chosen_logps = _get_batch_logps(policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
+            mle_loss = -policy_chosen_logps
+            # mle_loss = _get_batch_mle_loss(policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
+            unlike_loss = _get_batch_ul_loss(policy_chosen_logits, batch['chosen_labels'])
+            losses = mle_loss + self.rank_alpha * unlike_loss
+            metrics['losses/unlike'] = unlike_loss.cpu().detach().numpy().tolist()
+            metrics['losses/mle'] = mle_loss.cpu().detach().numpy().tolist()
+            metrics['losses/overall'] = losses.cpu().detach().numpy().tolist()
+
 
         policy_chosen_logps = all_gather_if_needed(policy_chosen_logps.detach(), self.rank, self.world_size)
         metrics[f'logps_{train_test}/chosen'] = policy_chosen_logps.cpu().numpy().tolist()
@@ -413,7 +472,6 @@ class BasicTrainer(object):
                     local_eval_batch = slice_and_move_batch_for_device(eval_batch, self.rank, self.world_size, self.rank)
                     with torch.no_grad():
                         _, eval_metrics = self.get_batch_metrics(local_eval_batch, self.config.loss, train=False)
-
                     for k, v in eval_metrics.items():
                         all_eval_metrics[k].extend(v)
 
