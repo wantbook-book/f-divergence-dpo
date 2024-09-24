@@ -1,60 +1,7 @@
+
 from pathlib import Path
 import matplotlib.pyplot as plt
-def read_f_divergence_and_reward(file_path):
-    with open(file_path, 'r') as file:
-        lines = file.readlines()
-
-    f_divergence = None
-    reward = None
-
-    for line in lines:
-        if "Averaged f-divergence:" in line:
-            f_divergence = float(line.split(":")[1].strip())
-        elif "Averaged reward:" in line:
-            reward = float(line.split(":")[1].strip())
-
-    return f_divergence, reward
-
-def read_all_divergence_and_reward_from_dir(dir_path: Path, output_dir: Path)->tuple[list[float], list[float]]:
-    divergences, rewards = [], []
-    for file_path in dir_path.iterdir():
-        if file_path.is_file() and file_path.suffix == '.txt':
-            f_divergence, reward = read_f_divergence_and_reward(file_path)
-            # if f_divergence > DIVERGENCE_THRES:
-            #     continue
-            # print(f"{file_path.name}: f-divergence: {f_divergence}, reward: {reward}")
-            divergences.append(f_divergence)
-            rewards.append(reward)
-    print('read all divergences and rewards from dir: '+str(dir_path))
-    with open(output_dir/f'{dir_path.name}.txt', 'w') as file:
-        for f_divergence, reward in zip(divergences, rewards):
-            file.write(f"{f_divergence} {reward}\n")
-    print('save all divergences and rewards to '+str(output_dir/f'{dir_path.name}.txt'))
-    return divergences, rewards
-
-DIVERGENCE_THRES = 70
-def read_all_divergence_and_reward_from_file(file_path: Path)->tuple[list[float], list[float]]:
-    divergences, rewards = [], []
-    with open(file_path, 'r') as file:
-        lines = file.readlines()
-    for line in lines:
-        f_divergence, reward = list(map(float, line.split()))
-        if f_divergence > DIVERGENCE_THRES:
-            continue
-        divergences.append(f_divergence)
-        rewards.append(reward)
-    print('read all divergences and rewards from file: '+str(file_path))
-    return divergences, rewards
-
-def read_all_divergence_and_reward(path: Path, output_dir:Path)->tuple[list[float], list[float]]:
-    if path.is_file():
-        return read_all_divergence_and_reward_from_file(path)
-    else:
-        return read_all_divergence_and_reward_from_dir(path, output_dir)
-
-
-
-
+from io_utils import read_all_divergence_and_reward
 def draw_divergence_and_reward(paths: Path, labels: list[str], colors: list[str], divergence_name: str, output_dir:Path):
     all_divergences = []
     all_rewards = []
@@ -83,35 +30,43 @@ def draw_divergence_and_reward(paths: Path, labels: list[str], colors: list[str]
 if __name__ == '__main__':
     root_dir = Path(__file__).parent.parent/'outputs'
     
-    # labels = ['DPO', 'SFT', 'PPO-GT', 'PPO-RM']
-    # colors = ['#DAA520', '#8FBC8F', '#9370DB', '#FF69B4']
+
+    labels = ['DPO', 'SFT', 'PPO-GT', 'PPO-RM', 'Unlikelihood']
+    colors = ['#DAA520', '#8FBC8F', '#9370DB', '#FF69B4', '#00CC99']
+
     # 深粉色 #FF0066
     # 橙色 #FFA500
     # 蓝色 #0066CC
-    # paths = [
-    #     root_dir / 'dpo_kl_vs_reward.txt',
-    #     root_dir / 'sft_kl_vs_reward.txt',
-    #     # root_dir / ''
-    # ]
+    paths = [
+        # root_dir / 'graphs/dpo_kl_vs_reward.txt',
+        # root_dir / 'graphs/sft_kl_vs_reward.txt',
+        # root_dir / 'graphs/gt_ppo_kl_vs_reward.txt',
+        # root_dir / 'graphs/rm_ppo_kl_vs_reward.txt',
+        root_dir / 'unlike_imdb1.0'
+    ]
     # labels = ['DPO', 'SFT']
     # colors = ['#DAA520', '#8FBC8F']
-    # divergence_name = 'kl_divergence'
+    divergence_name = 'rkl_divergence'
 
     paths = [
         # root_dir / 'jsd_imdb',
         # root_dir / 'forward_imdb',
-        root_dir / 'alpha0.1_imdb',
+        # root_dir / 'graphs/alpha0.1_imdb.txt',
+        root_dir / 'unlike_imdb1.0'
     ]
     colors = ['#FF0066']
+    colors = ['#00CC99']
     labels = [
         # 'DPO-JSD',
         # 'DPO-FKL',
-        r'DPO($\alpha$=0.3)'
+        # r'DPO($\alpha$=0.1)',
+        'Unlikelihood'
     ]
 
-    # divergence_name = 'JSD'
-    # divergence_name = 'Forward KL'
-    divergence_name = r'$\alpha$-divergence(0.3)'
+    divergence_name = 'JSD'
+    divergence_name = 'Forward KL'
+    divergence_name = r'$\alpha$-divergence(0.1)'
+    divergence_name = 'RKL'
 
 
     output_dir = root_dir/'graphs'
