@@ -50,6 +50,45 @@ def stabilized_log1pexp(x):
     return torch.where(mask, safe_x + torch.log1p(torch.exp(-safe_x)), torch.log1p(torch.exp(risky_x)))
 
 
+def tdpo_loss(chosen_logps_margin: torch.FloatTensor,
+              rejected_logps_margin: torch.FloatTensor,
+              chosen_position_kl: torch.FloatTensor,
+              rejected_position_kl: torch.FloatTensor,
+              beta: float, alpha: float = 0.5, if_tdpo2: bool = True) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+    """Compute the TDPO loss for a batch of policy and reference model log probabilities.
+
+    Args:
+        chosen_logps_margin: The difference of log probabilities between the policy model and the reference model for the chosen responses. Shape: (batch_size,)
+        rejected_logps_margin: The difference of log probabilities between the policy model and the reference model for the rejected responses. Shape: (batch_size,)
+        chosen_position_kl: The difference of sequential kl divergence between the policy model and the reference model for the chosen responses. Shape: (batch_size,)
+        rejected_position_kl: The difference of sequential kl divergence between the policy model and the reference model for the rejected responses. Shape: (batch_size,)
+        beta: Temperature parameter for the TDPO loss, typically something in the range of 0.1 to 0.5. We ignore the reference model as beta -> 0.
+        alpha: Temperature parameter for the TDPO loss, used to adjust the impact of sequential kl divergence.
+        if_tdpo2: Determine whether to use method TDPO2, default is True; if False, then use method TDPO1.
+
+    Returns:
+        A tuple of two tensors: (losses, rewards).
+        The losses tensor contains the TDPO loss for each example in the batch.
+        The rewards tensors contain the rewards for response pair.
+    """
+
+    chosen_values = chosen_logps_margin + chosen_position_kl
+    rejected_values = rejected_logps_margin + rejected_position_kl
+
+    chosen_rejected_logps_margin = chosen_logps_margin - rejected_logps_margin
+
+
+    if not if_tdpo2:
+        logits = chosen_rejected_logps_margin - (rejected_position_kl - chosen_position_kl)    # tdpo1
+    else:
+        logits = chosen_rejected_logps_margin - alpha * (rejected_position_kl - chosen_position_kl.detach())  # tdpo2
+    losses = -F.logsigmoid(beta * logits)
+
+    chosen_rewards = beta * chosen_values.detach()
+    rejected_rewards = beta * rejected_values.detach()
+
+    return losses, chosen_rewards, rejected_rewards
+
 def dpo_loss(policy_chosen_logps: torch.FloatTensor,
              policy_rejected_logps: torch.FloatTensor,
              reference_chosen_logps: torch.FloatTensor,
@@ -225,6 +264,51 @@ def _get_batch_logps(logits: torch.FloatTensor, labels: torch.LongTensor, averag
 def _get_batch_mle_loss(logits: torch.FloatTensor, labels: torch.LongTensor, average_log_prob: bool = False) -> torch.FloatTensor:
     return -(_get_batch_logps(logits, labels, average_log_prob))
 
+def _tdpo_get_batch_logps(logits: torch.FloatTensor, reference_logits: torch.FloatTensor, labels: torch.LongTensor,
+                          average_log_prob: bool = False):
+    """Compute the kl divergence/log probabilities of the given labels under the given logits.
+
+    Args:
+        logits: Logits of the model (unnormalized). Shape: (batch_size, sequence_length, vocab_size)
+        reference_logits: Logits of the reference model (unnormalized). Shape: (batch_size, sequence_length, vocab_size)
+        labels: Labels for which to compute the log probabilities. Label tokens with a value of -100 are ignored. Shape: (batch_size, sequence_length)
+        average_log_prob: If True, return the average log probability per (non-masked) token. Otherwise, return the sum of the log probabilities of the (non-masked) tokens.
+
+    Returns:
+        Several tensors of shape (batch_size,) containing the average/sum kl divergence/log probabilities of the given labels under the given logits.
+    """
+    assert logits.shape[:-1] == labels.shape
+    assert reference_logits.shape[:-1] == labels.shape
+
+    labels = labels[:, 1:].clone()
+    logits = logits[:, :-1, :]
+    reference_logits = reference_logits[:, :-1, :]
+
+    loss_mask = (labels != -100)
+
+    # dummy token; we'll ignore the losses on these tokens later
+    labels[labels == -100] = 0
+
+    vocab_logps = logits.log_softmax(-1)
+
+    reference_vocab_ps = reference_logits.softmax(-1)
+    reference_vocab_logps = reference_vocab_ps.log()
+
+    per_position_kl = (reference_vocab_ps * (reference_vocab_logps - vocab_logps)).sum(-1)
+    per_token_logps = torch.gather(vocab_logps, dim=2, index=labels.unsqueeze(2)).squeeze(2)
+    per_reference_token_logps = torch.gather(reference_vocab_logps, dim=2, index=labels.unsqueeze(2)).squeeze(2)
+
+    logps_margin = per_token_logps - per_reference_token_logps
+
+    if average_log_prob:
+        return (logps_margin * loss_mask).sum(-1) / loss_mask.sum(-1), \
+               (per_position_kl * loss_mask).sum(-1) / loss_mask.sum(-1), \
+               (per_token_logps * loss_mask).sum(-1) / loss_mask.sum(-1)
+    else:
+        return (logps_margin * loss_mask).sum(-1), \
+            (per_position_kl * loss_mask).sum(-1), \
+            (per_token_logps * loss_mask).sum(-1)
+
 def _get_batch_ul_loss(logits: torch.FloatTensor, labels: torch.LongTensor):
     """Compute unlikelihood loss of the given labels under the given logits.
 
@@ -240,31 +324,44 @@ def _get_batch_ul_loss(logits: torch.FloatTensor, labels: torch.LongTensor):
     batch_size, seq_length, vocab_size = logits.shape
 
     lprobs = F.log_softmax(logits, dim=-1)  # [batch_size, seq_length, vocab_size]
+    lprobs = lprobs.view(-1, lprobs.size(-1))
     probs = torch.exp(lprobs)  # 将log概率转换为概率 [batch_size, seq_length, vocab_size]
 
     #将 labels 展平为一维数组，方便索引
-    labels = labels.view(batch_size, seq_length)  # [batch_size * seq_length]
-    
+    # labels = labels.view(batch_size, seq_length)  # [batch_size * seq_length]
+    labels = labels.view(-1)
+
+    target = labels
+
     # 对于每一个时间步的真实标签，找到非目标词汇 (即负样本)
     # 首先计算负样本 mask
     # 创建一个全零的负样本 mask
-    negative_mask = torch.zeros_like(probs)
-    # 遍历每个样本，构建负样本 mask
-    for b in range(batch_size):
-        for t in range(1, seq_length):  # 从第1个时间步开始（因为第0个时间步没有历史上下文）
-            prev_tokens = labels[b, :t]  # 当前时间步 t 之前的 tokens 都作为负样本
-            for prev_token in prev_tokens:
-                if prev_token != -100:  # 忽略填充索引
-                    negative_mask[b, t, prev_token] = 1  # 标记这些之前生成的词为负样本
+    padding_idx = -100
+    ctx_cands = target.unsqueeze(0).expand(target.size(0), target.size(0))
+    # ctx_cands_ = (ctx_cands.tril(-1) + padding_idx)
+    # ctx_cands_ = ctx_cands_ * ctx_cands_.triu()
+    # ctx_cands = ctx_cands.tril(-1) + ctx_cands_
+    ctx_cands_ = torch.zeros_like(ctx_cands) + padding_idx
+    ctx_cands_ = ctx_cands_ - ctx_cands_.tril(-1)
+    ctx_cands = ctx_cands.tril(-1) + ctx_cands_
+    # Don't include the target for that timestep as a negative target.
+    ctx_cands = ctx_cands.masked_fill(ctx_cands == target.unsqueeze(1), padding_idx)
+    ctx_cands[ctx_cands==padding_idx] = 0
+
+    negative_targets = torch.zeros_like(lprobs).scatter_(1, ctx_cands, 1)
+    
 
     # 计算 1 - p(x_nt) 的值
     one_minus_probs = torch.clamp(1.0 - probs, min=1e-5)
     # 计算 unlikelihood loss: -log(1 - p(x_nt)) 乘以 negative mask
-    unlikelihood_loss = -torch.log(one_minus_probs) * negative_mask
+    unlikelihood_loss = -torch.log(one_minus_probs) * negative_targets
+
+    unlikelihood_loss = unlikelihood_loss.view(batch_size, seq_length, vocab_size)
 
     # 按照所有负样本的总和来计算损失
     # unlikelihood_loss = unlikelihood_loss.sum(-1)[:, -1].squeeze(-1)
     unlikelihood_loss = unlikelihood_loss.sum(-1).sum(-1)
+    # unlikelihood_loss = unlikelihood_loss.sum()
     return unlikelihood_loss
 
 
@@ -352,15 +449,18 @@ class BasicTrainer(object):
 
         policy_output = self.policy.generate(
             batch['prompt_input_ids'], attention_mask=batch['prompt_attention_mask'], max_length=self.config.max_length, do_sample=True, pad_token_id=self.tokenizer.pad_token_id)
-        if self.config.loss.name == 'dpo':
+        if self.config.loss.name == 'dpo' or self.config.loss.name == 'tdpo':
             reference_output = self.reference_model.generate(
-                batch['prompt_input_ids'], attention_mask=batch['prompt_attention_mask'], max_length=self.config.max_length, do_sample=True, pad_token_id=self.tokenizer.pad_token_id)
+                batch['prompt_input_ids'], attention_mask=batch['prompt_attention_mask'], 
+                max_length=self.config.max_length, do_sample=True, pad_token_id=self.tokenizer.pad_token_id
+            )
+
 
         policy_output = pad_to_length(policy_output, self.config.max_length, self.tokenizer.pad_token_id)
         policy_output = all_gather_if_needed(policy_output, self.rank, self.world_size)
         policy_output_decoded = self.tokenizer.batch_decode(policy_output, skip_special_tokens=True)
 
-        if self.config.loss.name == 'dpo':
+        if self.config.loss.name == 'dpo' or self.config.loss.name == 'tdpo':
             reference_output = pad_to_length(reference_output, self.config.max_length, self.tokenizer.pad_token_id)
             reference_output = all_gather_if_needed(reference_output, self.rank, self.world_size)
             reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
@@ -381,6 +481,32 @@ class BasicTrainer(object):
         rejected_logps = all_logps[batch['chosen_input_ids'].shape[0]:]
         return chosen_logps, rejected_logps
 
+
+    def tdpo_concatenated_forward(self, model: nn.Module, reference_model: nn.Module,
+                                  batch: Dict[str, Union[List, torch.LongTensor]]):
+        """Run the policy model and the reference model on the given batch of inputs, concatenating the chosen and rejected inputs together.
+
+           We do this to avoid doing two forward passes, because it's faster for FSDP.
+        """
+        concatenated_batch = concatenated_inputs(batch)
+        all_logits = model(concatenated_batch['concatenated_input_ids'],
+                           attention_mask=concatenated_batch['concatenated_attention_mask']).logits.to(torch.float32)
+        with torch.no_grad():
+            reference_all_logits = reference_model(concatenated_batch['concatenated_input_ids'],
+                                                   attention_mask=concatenated_batch[
+                                                       'concatenated_attention_mask']).logits.to(torch.float32)
+        all_logps_margin, all_position_kl, all_logps = _tdpo_get_batch_logps(all_logits, reference_all_logits, concatenated_batch['concatenated_labels'], average_log_prob=False)
+
+        chosen_logps_margin = all_logps_margin[:batch['chosen_input_ids'].shape[0]]
+        rejected_logps_margin = all_logps_margin[batch['chosen_input_ids'].shape[0]:]
+        chosen_position_kl = all_position_kl[:batch['chosen_input_ids'].shape[0]]
+        rejected_position_kl = all_position_kl[batch['chosen_input_ids'].shape[0]:]
+
+        chosen_logps = all_logps[:batch['chosen_input_ids'].shape[0]].detach()
+        rejected_logps = all_logps[batch['chosen_input_ids'].shape[0]:].detach()
+
+        return chosen_logps_margin, rejected_logps_margin, chosen_position_kl, rejected_position_kl, \
+            chosen_logps, rejected_logps     
 
     def get_batch_metrics(self, batch: Dict[str, Union[List, torch.LongTensor]], loss_config: DictConfig, train=True):
         """Compute the SFT or DPO loss and other metrics for the given batch of inputs."""
@@ -410,6 +536,33 @@ class BasicTrainer(object):
 
             policy_rejected_logps = all_gather_if_needed(policy_rejected_logps.detach(), self.rank, self.world_size)
             metrics[f'logps_{train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
+        elif loss_config.name == 'tdpo':
+            chosen_logps_margin, rejected_logps_margin, chosen_position_kl, rejected_position_kl, policy_chosen_logps, policy_rejected_logps\
+                = self.tdpo_concatenated_forward(self.policy, self.reference_model, batch)
+            losses, chosen_rewards, rejected_rewards = tdpo_loss(chosen_logps_margin, rejected_logps_margin,
+                                                                 chosen_position_kl, rejected_position_kl,
+                                                                 beta=loss_config.beta, alpha=loss_config.alpha, if_tdpo2=loss_config.if_tdpo2)
+
+            reward_accuracies = (chosen_rewards > rejected_rewards).float()
+
+            chosen_rewards = all_gather_if_needed(chosen_rewards, self.rank, self.world_size)
+            rejected_rewards = all_gather_if_needed(rejected_rewards, self.rank, self.world_size)
+            reward_accuracies = all_gather_if_needed(reward_accuracies, self.rank, self.world_size)
+
+            metrics[f'rewards_{train_test}/chosen'] = chosen_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/rejected'] = rejected_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/accuracies'] = reward_accuracies.cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/margins'] = (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
+
+            all_device_chosen_position_kl = all_gather_if_needed(chosen_position_kl.detach(), self.rank, self.world_size)
+            all_device_rejected_position_kl = all_gather_if_needed(rejected_position_kl.detach(), self.rank, self.world_size)
+
+            metrics[f'kl_{train_test}/chosen'] = all_device_chosen_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{train_test}/rejected'] = all_device_rejected_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{train_test}/margin'] = (all_device_chosen_position_kl - all_device_rejected_position_kl).cpu().numpy().tolist()
+
+            policy_rejected_logps = all_gather_if_needed(policy_rejected_logps.detach(), self.rank, self.world_size)
+            metrics[f'logps_{train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
 
         elif loss_config.name == 'sft':
             policy_chosen_logits = self.policy(batch['chosen_input_ids'], attention_mask=batch['chosen_attention_mask']).logits.to(torch.float32)
@@ -420,7 +573,7 @@ class BasicTrainer(object):
         elif loss_config.name == 'unlike':
             policy_chosen_logits = self.policy(batch['chosen_input_ids'], attention_mask=batch['chosen_attention_mask']).logits.to(torch.float32)
             policy_chosen_logps = _get_batch_logps(policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
-            mle_loss = -policy_chosen_logps
+            mle_loss = policy_chosen_logps
             # mle_loss = _get_batch_mle_loss(policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
             unlike_loss = _get_batch_ul_loss(policy_chosen_logits, batch['chosen_labels'])
             losses = mle_loss + self.rank_alpha * unlike_loss
@@ -448,7 +601,7 @@ class BasicTrainer(object):
         np.random.seed(self.seed)
         random.seed(self.seed)
 
-        if self.config.loss.name == 'dpo':
+        if self.config.loss.name == 'dpo' or self.config.loss.name == 'tdpo':
             self.reference_model.eval()
 
         self.example_counter = 0
@@ -465,7 +618,7 @@ class BasicTrainer(object):
                 if self.config.sample_during_eval:
                     all_policy_samples, all_reference_samples = [], []
                     policy_text_table = wandb.Table(columns=["step", "prompt", "sample"])
-                    if self.config.loss.name == 'dpo':
+                    if self.config.loss.name == 'dpo' or self.config.loss.name == 'tdpo':
                         reference_text_table = wandb.Table(columns=["step", "prompt", "sample"])
 
                 for eval_batch in (tqdm.tqdm(self.eval_batches) if self.rank == 0 else self.eval_batches):
@@ -487,7 +640,7 @@ class BasicTrainer(object):
 
                         for prompt, sample in zip(eval_batch['prompt'], policy_samples):
                             policy_text_table.add_data(self.example_counter, prompt, sample)
-                        if self.config.loss.name == 'dpo':
+                        if self.config.loss.name == 'dpo' or self.config.loss.name == 'tdpo':
                             for prompt, sample in zip(eval_batch['prompt'], reference_samples):
                                 reference_text_table.add_data(self.example_counter, prompt, sample)
 
@@ -495,7 +648,7 @@ class BasicTrainer(object):
                 rank0_print(f'eval after {self.example_counter}: {formatted_dict(mean_eval_metrics)}')
                 if self.config.sample_during_eval:                    
                     rank0_print(json.dumps(all_policy_samples[:10], indent=2))
-                    if self.config.loss.name == 'dpo':
+                    if self.config.loss.name == 'dpo' or self.config.loss.name == 'tdpo':
                         rank0_print(json.dumps(all_reference_samples[:10], indent=2))
 
                 if self.config.wandb.enabled and self.rank == 0:
@@ -503,7 +656,7 @@ class BasicTrainer(object):
 
                     if self.config.sample_during_eval:
                         wandb.log({"policy_samples": policy_text_table}, step=self.example_counter)
-                        if self.config.loss.name == 'dpo':
+                        if self.config.loss.name == 'dpo' or self.config.loss.name == 'tdpo':
                             wandb.log({"reference_samples": reference_text_table}, step=self.example_counter)
 
                 if self.example_counter > 0:
@@ -641,7 +794,7 @@ class FSDPTrainer(BasicTrainer):
                 apply_activation_checkpointing(self.policy, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
                 rank0_print('FSDP activation checkpointing enabled!')
 
-        if config.loss.name == 'dpo':
+        if config.loss.name == 'dpo' or config.loss.name == 'tdpo':
             rank0_print('Sharding reference model...')
             self.reference_model = FSDP(reference_model, **shared_fsdp_kwargs)
         
@@ -689,7 +842,7 @@ class TensorParallelTrainer(BasicTrainer):
         
         rank0_print('Sharding policy...')
         self.policy = tp.tensor_parallel(policy, sharded=True)
-        if config.loss.name == 'dpo':
+        if config.loss.name == 'dpo' or config.loss.name == 'tdpo':
             rank0_print('Sharding reference model...')
             self.reference_model = tp.tensor_parallel(reference_model, sharded=False)
 

@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=3 python -u train.py model=gpt2_large datasets=[imdb] loss=tdpo loss.beta=0.1 loss.if_tdpo2=false exp_name=imdb_tdpo1_gpt2large gradient_accumulation_steps=2 batch_size=64 eval_batch_size=32 trainer=BasicTrainer sample_during_eval=false model.fsdp_policy_mp=bfloat16
