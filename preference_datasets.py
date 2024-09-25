@@ -189,6 +189,37 @@ def get_imdb(split: str, silent: bool = False, cache_dir: str = None) -> Dict[st
 
     return data
 
+def get_tldr(split: str, silent: bool = False, cache_dir: str = None) -> Dict[str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
+    """Load the Anthropic Helpful-Harmless dataset from Huggingface and convert it to the necessary format.
+       For this dataset, the sft_target is just the chosen response.
+    """
+    print(f'Loading TLDR dataset...')
+    # dataset = datasets.load_dataset('Anthropic/hh-rlhf', split=split, cache_dir=cache_dir)
+    dataset = datasets.load_dataset("csv", data_files="misc/tldr/tldr_comparisons.csv")['train']
+    print('done')
+
+    def split_prompt_and_responses(ex):
+        prompt = extract_anthropic_prompt(ex['chosen'])
+        chosen_response = ex['chosen'][len(prompt):]
+        rejected_response = ex['rejected'][len(prompt):]
+        return prompt, chosen_response, rejected_response
+
+    data = defaultdict(lambda: defaultdict(list))
+    for row in tqdm.tqdm(dataset, desc='Processing IMDb', disable=silent):
+        # prompt, chosen, rejected = split_prompt_and_responses(row)
+        prompt = row['content']
+        chosen = row['summary0']
+        rejected = row['summary1']
+        choice = row['choice']
+        if choice == 1:
+            chosen, rejected = rejected, chosen
+        responses = [chosen, rejected]
+        n_responses = len(data[prompt]['responses'])
+        data[prompt]['pairs'].append((n_responses, n_responses + 1))
+        data[prompt]['responses'].extend(responses)
+        data[prompt]['sft_target'] = chosen
+
+    return data
 
 def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = None):
     """Load the given dataset by name. Supported by default are 'shp', 'hh', and 'se'."""
@@ -200,6 +231,8 @@ def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = No
         data = get_se(split, silent=silent, cache_dir=cache_dir)
     elif name == 'imdb':
         data = get_imdb(split, silent=silent, cache_dir=cache_dir)
+    elif name == 'tldr':
+        data = get_tldr(split, silent=silent, cache_dir=cache_dir)
     else:
         raise ValueError(f"Unknown dataset '{name}'")
 
