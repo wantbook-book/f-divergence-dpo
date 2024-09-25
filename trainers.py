@@ -346,10 +346,17 @@ def _get_batch_ul_loss(logits: torch.FloatTensor, labels: torch.LongTensor):
     ctx_cands = ctx_cands.tril(-1) + ctx_cands_
     # Don't include the target for that timestep as a negative target.
     ctx_cands = ctx_cands.masked_fill(ctx_cands == target.unsqueeze(1), padding_idx)
-    ctx_cands[ctx_cands==padding_idx] = 0
-
-    negative_targets = torch.zeros_like(lprobs).scatter_(1, ctx_cands, 1)
     
+    # -------- 注释替换没注释的，更精准
+    ctx_cands[ctx_cands==padding_idx] = 0
+    # valid_mask = ctx_cands != padding_idx
+    # valid_indices = ctx_cands[valid_mask]
+    # row_indices = valid_mask.nonzero(as_tuple=True)[0]
+    # negative_targets = torch.zeros_like(lprobs)
+    # negative_targets[row_indices, valid_indices] = 1
+    negative_targets = torch.zeros_like(lprobs).scatter_(1, ctx_cands, 1)
+    # ------------
+
 
     # 计算 1 - p(x_nt) 的值
     one_minus_probs = torch.clamp(1.0 - probs, min=1e-5)
@@ -360,7 +367,7 @@ def _get_batch_ul_loss(logits: torch.FloatTensor, labels: torch.LongTensor):
 
     # 按照所有负样本的总和来计算损失
     # unlikelihood_loss = unlikelihood_loss.sum(-1)[:, -1].squeeze(-1)
-    unlikelihood_loss = unlikelihood_loss.sum(-1).sum(-1)
+    unlikelihood_loss = unlikelihood_loss.sum()
     # unlikelihood_loss = unlikelihood_loss.sum()
     return unlikelihood_loss
 
@@ -573,12 +580,14 @@ class BasicTrainer(object):
         elif loss_config.name == 'unlike':
             policy_chosen_logits = self.policy(batch['chosen_input_ids'], attention_mask=batch['chosen_attention_mask']).logits.to(torch.float32)
             policy_chosen_logps = _get_batch_logps(policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
-            mle_loss = policy_chosen_logps
+            mle_loss = -policy_chosen_logps.sum()
             # mle_loss = _get_batch_mle_loss(policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
             unlike_loss = _get_batch_ul_loss(policy_chosen_logits, batch['chosen_labels'])
+
             losses = mle_loss + self.rank_alpha * unlike_loss
-            metrics['losses/unlike'] = unlike_loss.cpu().detach().numpy().tolist()
-            metrics['losses/mle'] = mle_loss.cpu().detach().numpy().tolist()
+            losses = torch.unsqueeze(losses, 0)
+            metrics['losses/unlike'] = [unlike_loss.cpu().detach().numpy().tolist()]
+            metrics['losses/mle'] = [mle_loss.cpu().detach().numpy().tolist()]
             metrics['losses/overall'] = losses.cpu().detach().numpy().tolist()
 
 
