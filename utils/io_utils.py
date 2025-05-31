@@ -13,15 +13,15 @@ def read_f_divergence_and_reward(file_path):
             reward = float(line.split(":")[1].strip())
 
     return f_divergence, reward
-
+DIVERGENCE_THRES = 10000
 def read_all_divergence_and_reward_from_dir(dir_path: Path, output_dir: Path)->tuple[list[float], list[float]]:
     divergences, rewards = [], []
 
     for file_path in dir_path.iterdir():
         if file_path.is_file() and file_path.suffix == '.txt':
             f_divergence, reward = read_f_divergence_and_reward(file_path)
-            # if f_divergence > DIVERGENCE_THRES:
-            #     continue
+            if f_divergence > DIVERGENCE_THRES:
+                continue
             # print(f"{file_path.name}: f-divergence: {f_divergence}, reward: {reward}")
             divergences.append(f_divergence)
             rewards.append(reward)
@@ -32,7 +32,7 @@ def read_all_divergence_and_reward_from_dir(dir_path: Path, output_dir: Path)->t
     print('save all divergences and rewards to '+str(output_dir/f'{dir_path.name}.txt'))
     return divergences, rewards
 
-DIVERGENCE_THRES = 70
+
 def read_all_divergence_and_reward_from_file(file_path: Path)->tuple[list[float], list[float]]:
     divergences, rewards = [], []
     with open(file_path, 'r') as file:

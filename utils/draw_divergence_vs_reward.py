@@ -1,7 +1,10 @@
 
 from pathlib import Path
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from io_utils import read_all_divergence_and_reward
+import seaborn as sns
+sns.set_style("whitegrid")
 def draw_divergence_and_reward(paths: Path, labels: list[str], colors: list[str], divergence_name: str, output_dir:Path, output_filename: str):
     all_divergences = []
     all_rewards = []
@@ -10,17 +13,27 @@ def draw_divergence_and_reward(paths: Path, labels: list[str], colors: list[str]
         all_divergences.append(divergences)
         all_rewards.append(rewards)
     
-    plt.figure(figsize=(10,5))
+    plt.figure(figsize=(8,6))
+    # plt.rcParams['font.sans-serif'] = ['Times New Roman']
+    plt.rc('font',family='times new roman')
     for divergences, rewards, label, color in zip(all_divergences, all_rewards, labels, colors):
-        plt.scatter(divergences, rewards, color=color, marker='o', label=label)
+        plt.scatter(divergences, rewards, color=color, marker='o', label=label, s=100)
 
     # 添加标题和标签
     # plt.title(f'Reward vs {divergence_name}')
-    plt.xlabel(divergence_name)
-    plt.ylabel('Reward')
-
-    plt.legend()
-
+    plt.xlabel(divergence_name, fontsize=24)
+    plt.ylabel('Reward', fontsize=24)
+    plt.xticks(fontsize=18)
+    plt.yticks(fontsize=18)
+    # 自定义图例元素
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', label=label,
+               markerfacecolor=color, markersize=15)
+        for label, color in zip(labels, colors)
+    ]
+    plt.legend(handles=legend_elements, loc='lower right', fontsize=20)
+    # plt.legend(loc='lower right', fontsize=20)
+    plt.tight_layout()
     # 显示图形
     plt.savefig(output_dir/output_filename)
     print('save divergence vs reward figure to '+ str(output_dir/output_filename))
@@ -56,7 +69,7 @@ if __name__ == '__main__':
         root_dir / '0530_gamma_dpo0.1_imdb'
     ]
     colors = ['#FF0066']
-    colors = ['#e25659', '#f8ad64', '#97b319']
+    colors = ['#e25659', '#335372', '#97b319']
     # colors = ['#e25659']
     labels = [
         # 'DPO-JSD',

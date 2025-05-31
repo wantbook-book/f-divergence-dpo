@@ -1,7 +1,6 @@
-# $f$-DPO
-This repository contains the implementation of $f$ - DPO (Direct Preference Optimization) with various divergence regularizations, such as forward KL, reverse KL, Jensen-Shannon divergence, and $\alpha$-divergences ( $\alpha \in (0,1)$ ). The code is designed for producing the results presented in our ICLR 2024 paper, "[Beyond Reverse KL: Generalizing Direct Preference Optimization with Diverse Divergence Constraints](https://arxiv.org/pdf/2309.16240.pdf)".
+# $\gamma$-DPO
 
-# Requirements
+##  Requirements
 To get started, please install the required libraries first:
 ```
 ipykernel==6.23.1
@@ -17,48 +16,24 @@ hydra-core==1.3.2
 tensor-parallel==1.2.4
 ```
 
-install slurm
 
 
+## How to Run?
 
-# How to Run?
-For experiments on the PPO with the IMDB-sentiment dataset, refer to the scripts in the "ppo/scripts/" folder. For example:
+1. $\gamma$-DPO
 
-```
-cd ppo
-bash scripts/sweep_jsd.sh
+```bash
+bash scripts/imdb/run_gamma_dpo.sh
 ```
 
-For PPO on the Anthropic HH dataset, check "run_ppo_hh.sh" in the "ppo/" folder. For instance:
-```
-cd ppo
-bash run_ppo_hh.sh  # Ensure you perform sft before PPO fine-tuning.
+2. N-DPO
+
+```bash
+bash scripts/imdb/run_n_dpo.sh
 ```
 
-For $f$-DPO on the IMDB-sentiment or Anthropic HH dataset, the scripts are located in the 'scripts' folder. For example:
-```
-bash scripts/hh/run_jsd.sh  # Ensure sft is done before $f$-DPO fine-tuning.
-bash scripts/imdb/run_jsd.sh
-```
+3. DPO
 
-For the mt-bench evaluation, consult the README file in the "mt_bench/" folder.
-
-For calibration experiments, refer to the README file in the "cali/" folder.
-
-# Citing Our Work
-If our work assists in your research, kindly cite it as follows:
+```bash
+bash scripts/imdb/run_reverse_kl.sh
 ```
-@inproceedings{
-wang2024beyond,
-title={Beyond Reverse {KL}: Generalizing Direct Preference Optimization with Diverse Divergence Constraints},
-author={Chaoqi Wang and Yibo Jiang and Chenghao Yang and Han Liu and Yuxin Chen},
-booktitle={The Twelfth International Conference on Learning Representations},
-year={2024},
-url={https://openreview.net/forum?id=2cRzmWXK9N}
-}
-```
-
-# Acknowledgements
-Our code builds upon these codebases:
-- [DPO: Direct Preference Optimization](https://github.com/eric-mitchell/direct-preference-optimization)
-- [Transformer Reinforcement Learning X (TRLX)](https://github.com/CarperAI/trlx/tree/main)
