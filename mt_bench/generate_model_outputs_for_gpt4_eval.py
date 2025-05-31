@@ -4,17 +4,17 @@ import os.path
 
 if __name__ == '__main__':
     # generate shell scripts that can obtain model outputs for GPT4 evaluation
-    model_path_pattern = "/path/to/pythia28/*/hf_model"
+    model_path_pattern = "/pubshare/fwk/dpo_cache/jovyan/anthropic_dpo_reverse_kl_pythia28_hh0.1_2024-08-20_15-18-13_795249/LATEST/hf_model"
     model_paths = glob.glob(model_path_pattern)
-    output_path = "/path/to/gen_model_answer.sh"
+    output_path = "/home/jovyan/notebook/fwk/FastChat/fastchat/llm_judge/gen_model_answer.sh"
     with open(output_path, 'w') as f:
         # first, write shell header
         f.write("#!/bin/bash\n")
         # second, deactivate the current conda environment
-        f.write("conda deactivate\n")
+        # f.write("conda deactivate\n")
         # third, switch to FastChat dir and activate the conda environment
-        f.write("cd /path/to/FastChat\n")
-        f.write("conda activate ./env\n")
+        f.write("cd /home/jovyan/notebook/fwk/FastChat\n")
+        # f.write("conda activate ./env\n")
         # cd to llm_judge dir
         f.write("cd ./fastchat/llm_judge\n")
         # fourth, generate shell commands
@@ -23,9 +23,9 @@ if __name__ == '__main__':
             model_id = model_path.split('/')[-2]
             # replace "." with "_"
             model_id = model_id.replace('.', '_')
-            output_file_path = f"/path/to/FastChat/fastchat/llm_judge/data/mt_bench/model_answer/{model_id}.jsonl"
+            output_file_path = f"/home/jovyan/notebook/fwk/FastChat/fastchat/llm_judge/data/mt_bench/model_answer/{model_id}.jsonl"
             if not os.path.exists(output_file_path):
-                f.write(f"python gen_model_answer.py --model-path {model_path} --model-id {model_id} --num-gpus-per-model 1 --num-gpus-total 4\n")
+                f.write(f"python gen_model_answer.py --model-path {model_path} --model-id {model_id} --num-gpus-per-model 1 --num-gpus-total 1\n")
                 # report generating progress
                 f.write(f"echo {model_id} generated\n")
     print(f"Shell script generated at {output_path}")

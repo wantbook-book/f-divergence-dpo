@@ -1,6 +1,6 @@
 from pathlib import Path
 
-result_dir = Path('/pubshare/fwk/ppo_ckpts/2024-08-22-13-25-target3')
+result_dir = Path('/pubshare/fwk/dpo_cache/jovyan/imdb_unlike1.0_gpt2_large_2024-09-25_01-50-04_583973')
 sub_dir = []
 for filepath in result_dir.iterdir():
     if filepath.is_dir():

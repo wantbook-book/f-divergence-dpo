@@ -102,14 +102,17 @@ f, f_prime_one = get_f_divergence(f_divergence, 1-args.alpha)
 state_dict_path = args.checkpoint #.cache/chaoqi/imdb_dpo_reverse_kl_gpt2_large_hh0.1_2023-07-10_20-46-25_643455/LATEST/policy.pt'  # insert your model path here
 
 
-tokenizer = AutoTokenizer.from_pretrained('gpt2-large')
+model_path = "/pubshare/LLM/openai-community/gpt2-large"
+sentiment_model_path = "/pubshare/LLM/siebert/sentiment-roberta-large-english"
+
+tokenizer = AutoTokenizer.from_pretrained(model_path)
 # tokenizer.pad_token = tokenizer.eos_token
 tokenizer.padding_side="left"
 if tokenizer.pad_token is None:
     tokenizer.pad_token=tokenizer.eos_token
 
 state_dict_path = Path(state_dict_path).resolve()
-model = AutoModelForCausalLM.from_pretrained('gpt2-large')
+model = AutoModelForCausalLM.from_pretrained(model_path)
 print(state_dict_path)
 # breakpoint()
 if state_dict_path.exists():
@@ -128,19 +131,20 @@ model.to('cuda')
 
 # Load reference model
 # ref_model_name = '.cache/chaoqi/imdb_dpo_gpt2_large_2023-07-10_16-45-15_446529/LATEST/policy.pt'  # this can be changed to another model if needed
-ref_tokenizer = AutoTokenizer.from_pretrained("gpt2-large")
+ref_tokenizer = AutoTokenizer.from_pretrained(model_path)
 # ref_tokenizer.truncation_side = "right"
 ref_tokenizer.padding_side="left"
 if ref_tokenizer.pad_token is None:
     ref_tokenizer.pad_token=tokenizer.eos_token
-ref_model = AutoModelForCausalLM.from_pretrained("gpt2-large")
+ref_model = AutoModelForCausalLM.from_pretrained(model_path)
 # ref_model.load_state_dict(torch.load(ref_model_name, map_location=torch.device('cpu'))['state'])
 ref_model.to('cuda')
 # import ipdb; ipdb.set_trace()
 
 sentiment_fn = pipeline(
     "sentiment-analysis",
-    "siebert/sentiment-roberta-large-english",
+    # "siebert/sentiment-roberta-large-english",
+    sentiment_model_path,
     top_k=2,
     truncation=True,
     batch_size=64,

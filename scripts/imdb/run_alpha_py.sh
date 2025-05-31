@@ -5,9 +5,9 @@ BETA=0.01
 EPOCHS=10
 
 values=(0.1 0.3 0.5 0.7 0.9)
-alpha=0.1
+alpha=0.7
 
-CUDA_VISIBLE_DEVICES=2 python -u train.py \
+CUDA_VISIBLE_DEVICES="5,6" python -u train.py \
      n_epochs=$EPOCHS \
      lr=1.5e-6 \
      model=gpt2_large \

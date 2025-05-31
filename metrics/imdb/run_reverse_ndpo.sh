@@ -1,9 +1,9 @@
 
 #!/bin/bash
 
-ckpt_path="/pubshare/fwk/dpo_cache/jovyan/imdb_0530_dpo_reverse_kl_gpt2_large_imdb0.1_2025-05-29_13-47-31_312350"
+ckpt_path="/pubshare/fwk/dpo_cache/jovyan/imdb_n_dpo_reverse_kl_gpt2_large_imdb0.1_2025-05-30_01-07-43_503068"
 # root_dir="/home/jovyan/notebook/f-divergence-dpo/outputs/dpo0.1_imdb"
-root_dir="/pubshare/fwk/code/f-divergence-dpo/outputs/0530_dpo0.1_imdb"
+root_dir="/pubshare/fwk/code/f-divergence-dpo/outputs/0530_n_dpo0.1_imdb"
 # an array of directory names
 # checkpoints=("step-13440" "step-18240" "step-22080" "step-26880" "step-30720" "step-35520" 
 # "step-39360" "step-44160" "step-48000" "step-7680" "LATEST" "step-14400" "step-1920" "step-23040" 
@@ -27,6 +27,6 @@ do
   # ls "$checkpoint"
 # done | xargs -I {} -P 5 srun --gres=gpu:1 -c 6 --mem 60G -p general --exclude=g002,g005,g006,g007,g008,g009  python metrics/imdb/imdb_eval_metrics.py --checkpoint $ckpt_path/{}/policy.pt --divergence reverse_kl
 # done | xargs -I {} -P 2 srun --gres=gpu:1 -c 6 --mem 20G -p general python metrics/imdb/imdb_eval_metrics.py --checkpoint $ckpt_path/{}/policy.pt --divergence reverse_kl
-done | CUDA_VISIBLE_DEVICES=3,4,5 ROOT_DIR=$root_dir xargs -I {} -P 1 python metrics/imdb/imdb_eval_metrics.py --checkpoint $ckpt_path/{}/policy.pt --divergence reverse_kl
+done | CUDA_VISIBLE_DEVICES=0,1,2 ROOT_DIR=$root_dir xargs -I {} -P 1 python metrics/imdb/imdb_eval_metrics.py --checkpoint $ckpt_path/{}/policy.pt --divergence reverse_kl
 # srun --gres=gpu:1 -c 6 --mem 20G -p general python metrics/imdb/imdb_eval_metrics.py --checkpoint $ckpt_path/step-960/policy.pt --divergence reverse_kl
 

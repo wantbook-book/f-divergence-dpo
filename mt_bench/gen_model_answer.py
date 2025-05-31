@@ -29,6 +29,7 @@ def run_eval(
     num_gpus_per_model,
     num_gpus_total,
     max_gpu_memory,
+    state_dict_path
 ):
     questions = load_questions(question_file, question_begin, question_end)
     # random shuffle the questions to balance the loading
@@ -58,6 +59,7 @@ def run_eval(
                 num_choices,
                 num_gpus_per_model,
                 max_gpu_memory,
+                state_dict_path=state_dict_path
             )
         )
 
@@ -75,6 +77,7 @@ def get_model_answers(
     num_choices,
     num_gpus_per_model,
     max_gpu_memory,
+    state_dict_path
 ):
     model, tokenizer = load_model(
         model_path,
@@ -85,6 +88,9 @@ def get_model_answers(
         cpu_offloading=False,
         debug=False,
     )
+    if len(state_dict_path)>0:
+        model.load_state_dict(torch.load(state_dict_path, map_location=torch.device('cpu'))['state'], strict=False)
+        model.to('cuda')
 
     for question in tqdm(questions):
         if question["category"] in temperature_config:
@@ -181,6 +187,12 @@ if __name__ == "__main__":
         required=True,
         help="The path to the weights. This can be a local folder or a Hugging Face repo ID.",
     )
+    parser.add_argument(
+        "--state-dict-path",
+        default='',
+        type=str,
+        help="The path to the weights. This can be a local folder or a Hugging Face repo ID.",
+    )
     parser.add_argument("--model-id", type=str, required=True)
     parser.add_argument(
         "--bench-name",
@@ -250,6 +262,7 @@ if __name__ == "__main__":
         args.num_gpus_per_model,
         args.num_gpus_total,
         args.max_gpu_memory,
+        state_dict_path=args.state_dict_path
     )
 
     reorg_answer_file(answer_file)

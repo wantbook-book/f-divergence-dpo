@@ -2,7 +2,7 @@
 from pathlib import Path
 import matplotlib.pyplot as plt
 from io_utils import read_all_divergence_and_reward
-def draw_divergence_and_reward(paths: Path, labels: list[str], colors: list[str], divergence_name: str, output_dir:Path):
+def draw_divergence_and_reward(paths: Path, labels: list[str], colors: list[str], divergence_name: str, output_dir:Path, output_filename: str):
     all_divergences = []
     all_rewards = []
     for path in paths:
@@ -15,15 +15,15 @@ def draw_divergence_and_reward(paths: Path, labels: list[str], colors: list[str]
         plt.scatter(divergences, rewards, color=color, marker='o', label=label)
 
     # 添加标题和标签
-    plt.title(f'Reward vs {divergence_name}')
+    # plt.title(f'Reward vs {divergence_name}')
     plt.xlabel(divergence_name)
     plt.ylabel('Reward')
 
     plt.legend()
 
     # 显示图形
-    plt.savefig(output_dir/f'{output_dir.name}_{divergence_name}_vs_reward.png')
-    print('save divergence vs reward figure to '+ str(output_dir/f'{output_dir.name}_{divergence_name}_vs_reward.png'))
+    plt.savefig(output_dir/output_filename)
+    print('save divergence vs reward figure to '+ str(output_dir/output_filename))
 
     
 
@@ -42,34 +42,38 @@ if __name__ == '__main__':
         # root_dir / 'graphs/sft_kl_vs_reward.txt',
         # root_dir / 'graphs/gt_ppo_kl_vs_reward.txt',
         # root_dir / 'graphs/rm_ppo_kl_vs_reward.txt',
-        root_dir / 'unlike_imdb1.0'
     ]
     # labels = ['DPO', 'SFT']
     # colors = ['#DAA520', '#8FBC8F']
-    divergence_name = 'rkl_divergence'
+    
 
     paths = [
         # root_dir / 'jsd_imdb',
         # root_dir / 'forward_imdb',
         # root_dir / 'graphs/alpha0.1_imdb.txt',
-        root_dir / 'unlike_imdb1.0'
+        root_dir / '0530_dpo0.1_imdb',
+        root_dir / '0530_n_dpo0.1_imdb',
+        root_dir / '0530_gamma_dpo0.1_imdb'
     ]
     colors = ['#FF0066']
-    colors = ['#00CC99']
+    colors = ['#e25659', '#f8ad64', '#97b319']
+    # colors = ['#e25659']
     labels = [
         # 'DPO-JSD',
         # 'DPO-FKL',
         # r'DPO($\alpha$=0.1)',
-        'Unlikelihood'
+        r'DPO',
+        r'N-DPO',
+        r'$\gamma-DPO$ (Ours)'
     ]
 
-    divergence_name = 'JSD'
-    divergence_name = 'Forward KL'
-    divergence_name = r'$\alpha$-divergence(0.1)'
-    divergence_name = 'RKL'
+    # divergence_name = 'JSD'
+    # divergence_name = 'Forward KL'
+    # divergence_name = r'$\alpha$-divergence(0.1)'
+    # divergence_name = 'RKL'
+    divergence_name = r'$\text{KL}_(\pi_\theta \parallel \pi_\text{ref})$'
 
-
-    output_dir = root_dir/'graphs'
+    output_dir = root_dir.parent/'graphs'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     draw_divergence_and_reward(
@@ -77,7 +81,8 @@ if __name__ == '__main__':
         labels=labels,
         colors=colors,
         divergence_name=divergence_name,
-        output_dir=output_dir
+        output_dir=output_dir,
+        output_filename='gamma_n_dpo_rkl_vs_reward.pdf'
     )
     
 

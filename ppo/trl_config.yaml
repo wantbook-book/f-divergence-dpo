@@ -1,0 +1,76 @@
+method:
+  chunk_size: 128
+  cliprange: 0.2
+  cliprange_reward: 10
+  cliprange_value: 0.2
+  gamma: 1.0
+  gen_experience_kwargs: null
+  gen_kwargs:
+    do_sample: true
+    max_new_tokens: 60
+    top_k: 0
+    top_p: 1.0
+  horizon: 10000
+  init_kl_coef: 0.03
+  lam: 0.95
+  name: PPOConfig
+  num_rollouts: 128
+  num_value_layers_unfrozen: 0
+  ppo_epochs: 4
+  ref_mean: null
+  ref_std: null
+  scale_reward: running
+  target: null
+  vf_coef: 1
+model:
+  archive: null
+  model_arch_type: causal
+  model_extra_configs: {}
+  model_path: lvwerra/gpt2-imdb
+  num_layers_unfrozen: 2
+  peft_config: null
+optimizer:
+  kwargs:
+    betas: !!python/tuple
+    - 0.9
+    - 0.95
+    eps: 1.0e-08
+    lr: 3.0e-05
+    weight_decay: 1.0e-06
+  name: adamw
+scheduler:
+  kwargs:
+    T_max: 10000
+    eta_min: 3.0e-05
+  name: cosine_annealing
+tokenizer:
+  padding_side: left
+  tokenizer_extra_configs: {}
+  tokenizer_path: gpt2
+  truncation_side: right
+train:
+  batch_size: 32
+  checkpoint_dir: /pubshare/fwk/ppo_ckpts/2024-08-22-06-36
+  checkpoint_interval: 10000
+  entity_name: null
+  epochs: 100
+  eval_interval: 50
+  group_name: null
+  logging_dir: null
+  minibatch_size: null
+  pipeline: PromptPipeline
+  project_name: trlx
+  resume_from_checkpoint: null
+  rollout_logging_dir: null
+  run_name: null
+  save_best: true
+  save_optimizer: true
+  seed: 1000
+  seq_length: 1024
+  tags:
+  - reverse_kl
+  - init_kl_coef_0.03
+  total_steps: 10000
+  tracker: wandb
+  trainer: AccelerateFPPOTrainer
+  trainer_kwargs: {}

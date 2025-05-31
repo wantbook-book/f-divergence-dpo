@@ -40,7 +40,7 @@ import time
 import json
 import functools
 from typing import Optional, Dict, List, Union, Tuple
-
+import math
 def stabilized_log1pexp(x):
     """
     Compute log(1 + exp(x)) in a numerically stable way."""
@@ -94,6 +94,7 @@ def dpo_loss(policy_chosen_logps: torch.FloatTensor,
              reference_chosen_logps: torch.FloatTensor,
              reference_rejected_logps: torch.FloatTensor,
              beta: float,
+             log_gamma: float=None,
              reference_free: bool = False) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
     """Compute the DPO loss for a batch of policy and reference model log probabilities.
     
@@ -112,9 +113,10 @@ def dpo_loss(policy_chosen_logps: torch.FloatTensor,
     """
     pi_logratios = policy_chosen_logps - policy_rejected_logps
     ref_logratios = reference_chosen_logps - reference_rejected_logps
-
     if reference_free:
         ref_logratios = 0
+        if log_gamma is not None:
+            ref_logratios = log_gamma
 
     logits = pi_logratios - ref_logratios
 
@@ -450,6 +452,7 @@ class BasicTrainer(object):
         elif config.loss.name == 'unlike':
             self.rank_alpha = config.loss.rank_alpha
             
+        config.loss.log_gamma = math.log(config.loss.gamma) if config.loss.gamma is not None else None
 
     def get_batch_samples(self, batch: Dict[str, torch.LongTensor]) -> Tuple[str, str]:
         """Generate samples from the policy (and reference model, if doing DPO training) for the given batch of inputs."""
@@ -461,7 +464,6 @@ class BasicTrainer(object):
                 batch['prompt_input_ids'], attention_mask=batch['prompt_attention_mask'], 
                 max_length=self.config.max_length, do_sample=True, pad_token_id=self.tokenizer.pad_token_id
             )
-
 
         policy_output = pad_to_length(policy_output, self.config.max_length, self.tokenizer.pad_token_id)
         policy_output = all_gather_if_needed(policy_output, self.rank, self.world_size)
@@ -529,7 +531,7 @@ class BasicTrainer(object):
             # losses, chosen_rewards, rejected_rewards = dpo_loss(
             #     policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, beta=loss_config.beta, reference_free=loss_config.reference_free)
             losses, chosen_rewards, rejected_rewards = self._loss_fn(
-                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, beta=loss_config.beta, reference_free=loss_config.reference_free)
+                policy_chosen_logps, policy_rejected_logps, reference_chosen_logps, reference_rejected_logps, log_gamma=loss_config.log_gamma, beta=loss_config.beta, reference_free=loss_config.reference_free)
             reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
             chosen_rewards = all_gather_if_needed(chosen_rewards, self.rank, self.world_size)

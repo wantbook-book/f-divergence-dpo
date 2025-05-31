@@ -11,6 +11,8 @@ reference_free: false
 # divergence type; currently only "kl, reverse kl and jsd" are supported
 divergence: ???
 
+gamma: null
+log_gamma: null
 
 # if use alpha divergence, we need to specify alpha
 alpha: ???
